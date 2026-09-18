@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FedEx Rate Quote Simulator</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --panel:#ffffff; --border:#d9dee3; --text:#1a2027; --muted:#5b6672;
+    --accent:#4d148c; --accent2:#ff6600; --ok:#0a7d33; --err:#c0392b; --code-bg:#0f172a; --code-text:#d7e2f0;
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:inherit;font-size:14px}
+  header{background:var(--accent);color:#fff;padding:14px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header .badge{background:var(--accent2);color:#fff;border-radius:4px;padding:2px 8px;font-size:12px;font-weight:600}
+  main{max-width:1200px;margin:0 auto;padding:20px 16px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px}
+  .panel h2{margin:0 0 12px;font-size:15px;color:var(--accent)}
+  label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:10px 0 4px}
+  input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#fff;color:var(--text)}
+  textarea{font-family:Consolas,Menlo,monospace;font-size:12px;min-height:260px;resize:vertical;line-height:1.45}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row>div{flex:1;min-width:160px}
+  button{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;margin-top:12px}
+  button.secondary{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button:hover:not(:disabled){filter:brightness(1.12)}
+  .status{display:inline-block;margin-left:10px;font-weight:600;font-size:13px}
+  .status.ok{color:var(--ok)} .status.err{color:var(--err)}
+  .io{grid-column:1/-1}
+  .io-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.io-grid{grid-template-columns:1fr}}
+  .io h3{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  pre{background:var(--code-bg);color:var(--code-text);border-radius:8px;padding:14px;font-size:12px;line-height:1.5;overflow:auto;max-height:520px;white-space:pre-wrap;word-break:break-word;margin:0}
+  .meta{font-size:12px;color:var(--muted);margin:6px 0}
+  .warn{background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:10px 14px;font-size:12.5px;margin:0 0 14px;grid-column:1/-1;line-height:1.5}
+  .warn code{background:#fde8d3;padding:1px 5px;border-radius:4px}
+  .token-line{font-size:12px;margin-top:8px;word-break:break-all;color:var(--muted)}
+  .pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700;margin-right:8px}
+  .pill.s2xx{background:#d9f2e0;color:var(--ok)} .pill.s4xx,.pill.s5xx{background:#fbdedb;color:var(--err)}
+  .rates-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+  .rates-table th,.rates-table td{border:1px solid var(--border);padding:6px 10px;text-align:left}
+  .rates-table th{background:#eef1f4}
+</style>
+</head>
+<body>
+<header>
+  <h1>FedEx Rate Quote Simulator</h1>
+  <span class="badge">comprehensiverates / quotes</span>
+</header>
+<main>
+  <div class="warn">
+    <strong>⚠ CORS note:</strong> FedEx APIs do not allow direct calls from a browser page (Postman works because it's a desktop app).
+    Run the included proxy first — <code>python fedex_proxy.py</code> — and keep Proxy URL as <code>http://localhost:8765</code>.
+    Your credentials stay on your machine; nothing is stored or sent anywhere except FedEx.
+  </div>
+
+  <!-- Config / Auth -->
+  <section class="panel">
+    <h2>1 · Credentials &amp; Token</h2>
+    <div class="row">
+      <div>
+        <label>Environment</label>
+        <select id="env">
+          <option value="production">Production (apis.fedex.com)</option>
+          <option value="sandbox">Sandbox (apis-sandbox.fedex.com)</option>
+        </select>
+      </div>
+      <div>
+        <label>Proxy URL (local)</label>
+        <input id="proxy" value="http://localhost:8765">
+      </div>
+    </div>
+    <label>Grant Type</label>
+    <select id="grantType">
+      <option value="client_credentials">client_credentials — single credential pair</option>
+      <option value="csp_credentials">csp_credentials — token credential + API (child) credential</option>
+    </select>
+    <div class="row">
+      <div>
+        <label id="lblClientId">API Key (client_id)</label>
+        <input id="clientId" autocomplete="off">
+      </div>
+      <div>
+        <label id="lblClientSecret">Secret Key (client_secret)</label>
+        <input id="clientSecret" type="password" autocomplete="off">
+      </div>
+    </div>
+    <div class="row" id="childRow" hidden>
+      <div>
+        <label>API / Child Key (child_Key)</label>
+        <input id="childKey" autocomplete="off">
+      </div>
+      <div>
+        <label>API / Child Secret (child_secret)</label>
+        <input id="childSecret" type="password" autocomplete="off">
+      </div>
+    </div>
+    <label>Account Number</label>
+    <input id="account" placeholder="Your 9-digit FedEx account number">
+    <button id="btnToken">Get OAuth Token</button>
+    <span id="tokenStatus" class="status"></span>
+    <div id="tokenLine" class="token-line"></div>
+  </section>
+
+  <!-- Request body -->
+  <section class="panel">
+    <h2>2 · Rate Request Body (editable JSON)</h2>
+    <label>Endpoint</label>
+    <select id="endpoint">
+      <option value="/rate/v1/rates/quotes">/rate/v1/rates/quotes — standard (developer portal projects)</option>
+      <option value="/rate/v1/comprehensiverates/quotes">/rate/v1/comprehensiverates/quotes — restricted (CSP/internal)</option>
+    </select>
+    <textarea id="body" spellcheck="false" style="margin-top:10px"></textarea>
+    <button id="btnSend" disabled>Send Rate Request ▸</button>
+    <button id="btnReset" class="secondary">Reset Sample</button>
+    <span id="sendStatus" class="status"></span>
+  </section>
+
+  <!-- Request / Response viewer -->
+  <section class="panel io">
+    <h2>3 · Request &amp; Response</h2>
+    <div class="io-grid">
+      <div>
+        <h3>Request sent to FedEx</h3>
+        <pre id="reqView">—</pre>
+      </div>
+      <div>
+        <h3>Response from FedEx <span id="respMeta"></span></h3>
+        <pre id="respView">—</pre>
+      </div>
+    </div>
+    <div id="ratesSummary"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let token = null;
+
+const SAMPLE = {
+  "accountNumber": { "value": "Your Account number" },
+  "rateRequestControlParameters": { "returnTransitTimes": true },
+  "requestedShipment": {
+    "shipper": {
+      "accountNumber": { "value": "Your Account number" },
+      "address": { "city": "BOONEVILLE", "stateOrProvinceCode": "MS", "postalCode": "38829", "countryCode": "US" }
+    },
+    "shippingChargesPayment": {
+      "paymentType": "SENDER",
+      "payor": { "responsibleParty": { "accountNumber": { "value": "Your Account number" } } }
+    },
+    "recipient": {
+      "address": { "city": "Phoenix", "stateOrProvinceCode": "AZ", "postalCode": "85028", "countryCode": "US" }
+    },
+    "preferredCurrency": "USD",
+    "rateRequestType": ["PREFERRED"],
+    "shipDatestamp": "TODAY",
+    "pickupType": "USE_SCHEDULED_PICKUP",
+    "requestedPackageLineItems": [
+      {
+        "weight": { "units": "LB", "value": 32.98 },
+        "dimensions": { "length": 17, "width": 12, "height": 10, "units": "IN" },
+        "packageSpecialServices": { "specialServiceTypes": [], "signatureOptionDetail": {} }
+      }
+    ],
+    "packagingType": "YOUR_PACKAGING",
+    "totalPackageCount": 1,
+    "totalWeight": 65.95,
+    "shipmentSpecialServices": { "specialServiceTypes": [] },
+    "customsClearanceDetail": {
+      "commodities": [
+        {
+          "unitPrice": { "currency": "USD", "amount": 1 },
+          "numberOfPieces": 1,
+          "quantity": 1,
+          "quantityUnits": "CA",
+          "customsValue": { "currency": "USD", "amount": 1 },
+          "harmonizedCode": "4820.10.20.10",
+          "weight": { "units": "LB", "value": 1 },
+          "partNumber": "11248748"
+        }
+      ]
+    },
+    "smartPostInfoDetail": { "hubId": "5379", "indicia": "PARCEL_SELECT" }
+  },
+  "carrierCodes": ["FXSP"]
+};
+
+function resetSample(){
+  const acct = $('account').value.trim();
+  let txt = JSON.stringify(SAMPLE, null, 2)
+    .replace(/"shipDatestamp": "[^"]*"/, '"shipDatestamp": "' + new Date().toISOString().slice(0, 10) + '"');
+  if (acct) txt = txt.split("Your Account number").join(acct);
+  $('body').value = txt;
+}
+resetSample();
+$('btnReset').onclick = resetSample;
+$('account').addEventListener('change', () => {
+  const acct = $('account').value.trim();
+  if (acct) $('body').value = $('body').value.split("Your Account number").join(acct);
+});
+
+function fedexBase(){ return $('env').value === 'sandbox' ? 'https://apis-sandbox.fedex.com' : 'https://apis.fedex.com'; }
+function callUrl(path){
+  const p = $('proxy').value.trim().replace(/\/$/,'');
+  return p ? p + path : fedexBase() + path;
+}
+function extraHeaders(){ return { 'X-FedEx-Env': $('env').value }; }
+
+function showRequest(method, path, headers, bodyText){
+  const shown = { ...headers };
+  if (shown.Authorization) shown.Authorization = 'Bearer ' + token.slice(0,12) + '…(masked)';
+  delete shown['X-FedEx-Env'];
+  $('reqView').textContent =
+    method + ' ' + fedexBase() + path + '\n\n' +
+    Object.entries(shown).map(([k,v]) => k + ': ' + v).join('\n') +
+    '\n\n' + bodyText;
+}
+
+function showResponse(status, ms, text){
+  const cls = status >= 200 && status < 300 ? 's2xx' : (status >= 500 ? 's5xx' : 's4xx');
+  $('respMeta').innerHTML = '<span class="pill ' + cls + '">' + status + '</span><span class="meta">' + ms + ' ms · ' + text.length.toLocaleString() + ' bytes</span>';
+  try { $('respView').textContent = JSON.stringify(JSON.parse(text), null, 2); }
+  catch(e){ $('respView').textContent = text || '(empty response)'; }
+}
+
+async function doFetch(path, opts){
+  const t0 = performance.now();
+  const resp = await fetch(callUrl(path), opts);
+  const text = await resp.text();
+  return { status: resp.status, ms: Math.round(performance.now() - t0), text };
+}
+
+function corsHint(err){
+  return 'Network error: ' + err.message +
+    '\n\nIf this is a CORS / "Failed to fetch" error, the local proxy is probably not running.' +
+    '\nStart it with:  python fedex_proxy.py   (then retry)';
+}
+
+/* ---- Grant type toggle ---- */
+$('grantType').onchange = () => {
+  const csp = $('grantType').value === 'csp_credentials';
+  $('childRow').hidden = !csp;
+  $('lblClientId').textContent = csp ? 'Token Credential Key (client_id)' : 'API Key (client_id)';
+  $('lblClientSecret').textContent = csp ? 'Token Credential Secret (client_secret)' : 'Secret Key (client_secret)';
+};
+
+/* ---- Step 1: OAuth token ---- */
+$('btnToken').onclick = async () => {
+  const grant = $('grantType').value;
+  const id = $('clientId').value.trim(), secret = $('clientSecret').value.trim();
+  const childKey = $('childKey').value.trim(), childSecret = $('childSecret').value.trim();
+  const st = $('tokenStatus');
+  if (!id || !secret){ st.textContent = 'Enter token credential key and secret'; st.className = 'status err'; return; }
+  if (grant === 'csp_credentials' && (!childKey || !childSecret)){ st.textContent = 'Enter API (child) key and secret'; st.className = 'status err'; return; }
+  st.textContent = 'Requesting…'; st.className = 'status';
+
+  let form = 'grant_type=' + grant + '&client_id=' + encodeURIComponent(id) + '&client_secret=' + encodeURIComponent(secret);
+  let maskedForm = 'grant_type=' + grant + '&client_id=' + encodeURIComponent(id) + '&client_secret=***masked***';
+  if (grant === 'csp_credentials'){
+    form += '&child_Key=' + encodeURIComponent(childKey) + '&child_secret=' + encodeURIComponent(childSecret);
+    maskedForm += '&child_Key=' + encodeURIComponent(childKey) + '&child_secret=***masked***';
+  }
+  showRequest('POST', '/oauth/token', { 'Content-Type': 'application/x-www-form-urlencoded' }, maskedForm);
+  try {
+    const r = await doFetch('/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...extraHeaders() },
+      body: form
+    });
+    showResponse(r.status, r.ms, maskToken(r.text));
+    if (r.status === 200){
+      const j = JSON.parse(r.text);
+      token = j.access_token;
+      st.textContent = '✓ Token OK (expires in ' + j.expires_in + 's)'; st.className = 'status ok';
+      $('tokenLine').textContent = 'Bearer ' + token.slice(0, 24) + '… (masked in views)';
+      $('btnSend').disabled = false;
+    } else {
+      st.textContent = '✗ Failed (' + r.status + ')'; st.className = 'status err';
+    }
+  } catch(err){
+    st.textContent = '✗ Network error'; st.className = 'status err';
+    $('respView').textContent = corsHint(err); $('respMeta').innerHTML = '';
+  }
+};
+
+function maskToken(text){
+  try { const j = JSON.parse(text); if (j.access_token) j.access_token = j.access_token.slice(0,16) + '…(masked)'; return JSON.stringify(j); }
+  catch(e){ return text; }
+}
+
+/* ---- Step 2: Rate request ---- */
+$('btnSend').onclick = async () => {
+  const st = $('sendStatus');
+  let bodyObj;
+  try { bodyObj = JSON.parse($('body').value); }
+  catch(e){ st.textContent = 'Invalid JSON: ' + e.message; st.className = 'status err'; return; }
+  st.textContent = 'Sending…'; st.className = 'status';
+  $('ratesSummary').innerHTML = '';
+  const bodyText = JSON.stringify(bodyObj, null, 2);
+  const path = $('endpoint').value;
+  const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'X-locale': 'en_US' };
+  showRequest('POST', path, headers, bodyText);
+  try {
+    const r = await doFetch(path, {
+      method: 'POST',
+      headers: { ...headers, ...extraHeaders() },
+      body: JSON.stringify(bodyObj)
+    });
+    showResponse(r.status, r.ms, r.text);
+    st.textContent = r.status === 200 ? '✓ Success' : '✗ ' + r.status; st.className = 'status ' + (r.status === 200 ? 'ok' : 'err');
+    if (r.status === 200) summarizeRates(r.text);
+  } catch(err){
+    st.textContent = '✗ Network error'; st.className = 'status err';
+    $('respView').textContent = corsHint(err); $('respMeta').innerHTML = '';
+  }
+};
+
+function summarizeRates(text){
+  try {
+    const j = JSON.parse(text);
+    const details = j.output && j.output.rateReplyDetails;
+    if (!details || !details.length) return;
+    let rows = '';
+    for (const d of details){
+      const rd = (d.ratedShipmentDetails && d.ratedShipmentDetails[0]) || {};
+      rows += '<tr><td>' + (d.serviceName || d.serviceType || '') + '</td>' +
+              '<td>' + (rd.rateType || '') + '</td>' +
+              '<td>' + (rd.totalNetCharge != null ? rd.totalNetCharge : '') + ' ' + (rd.currency || '') + '</td>' +
+              '<td>' + ((d.commit && d.commit.dateDetail && d.commit.dateDetail.dayFormat) || (d.operationalDetail && d.operationalDetail.transitTime) || '—') + '</td></tr>';
+    }
+    $('ratesSummary').innerHTML = '<h3 style="margin-top:16px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Quote Summary</h3>' +
+      '<table class="rates-table"><tr><th>Service</th><th>Rate Type</th><th>Total Net Charge</th><th>Delivery</th></tr>' + rows + '</table>';
+  } catch(e){}
+}
+</script>
+</body>
+</html>
